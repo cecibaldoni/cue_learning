@@ -10,67 +10,47 @@ library(mapview) #for interactive visualization of the spatial data
 library(parallel)
 
 # STEP 1: open data for all trials ------------------------------------------
-#coords <- read.csv("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/jul4_data/coordinates_cue.csv") %>% 
-#  mutate(season = str_replace_all(season, " ", ""))
+
 doors <- read.csv("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/jul4_data/trial_door.csv") %>% 
   mutate(Trial = paste0("T",trial_n))
 
-coords <- read.csv("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/oct12/Food_door coordinates.csv")
+coords <- read.csv("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/oct12_data/Food_door coordinates.csv") %>% 
+  mutate(Trial = paste0("T",TRIAL)) %>% 
+  mutate(unique_trial_ID = paste(SEASON, Trial, ID, sep = "_"))
 
 tracking <- lapply(list.files("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/oct12_data/tracking", full.names = T), read.csv) %>% 
   reduce(rbind) %>% 
-  drop_na(frame)
+  drop_na(frame) %>% 
+  mutate(unique_trial_ID = paste(Season, Trial, ID, sep = "_")) #create unique trial IDs. there are 10 trials per season per shrew
 
-# STEP 1: open data for 5 trials ------------------------------------------
-# files_ls <- list.files("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/may16_data/SHREWCECI/", pattern = ".csv", full.names = T)
+
+# # STEP 2: create spatial objects ------------------------------------------
 # 
-# trials <- lapply(files_ls, read.csv) %>% 
-#   reduce(full_join, by = names(lapply(files_ls,read.csv)[[1]])) %>% 
-#   dplyr::select(c(1:11)) %>%  #the 5th trial has two extra columns. removing these columns from the final dataset
-#   drop_na(x) #remove rows with NAs. maybe the merging procedure wasn't super efficient
+# #spatial point for food location
+# food_pts <- st_as_sf(coords, coords =  c("food_x","food_y"))
 # 
-# food_location <- data.frame(x = 127.63317, y = 26.34548)
+# #create a buffer of 6 cm around the food
+# food_buff <- food_pts %>% 
+#   st_buffer(dist = 6) 
 # 
-# doors <- data.frame(Door = c("DoorA", "DoorB", "DoorC", "DoorD"),
-#                     x = c(50.19882, 103.95784, 159.67497, 106.44998),
-#                     y = c(75.12022, 18.33503, 72.62808, 127.98919))
+# #doors list: points and buffered points
+# doors_pts <- coords %>% 
+#   st_as_sf(coords = c("x", "y"))# %>% 
+#   mutate(shortest_path = st_distance(x = .,y = food_pt)) #length of the shortest trajectory from each door to food))
 # 
-# trial_door <- data.frame(Trial = c("T1", "T2", "T3", "T4", "T5"),
-#                          Door = c("DoorA", "DoorC", "DoorA", "DoorB", "DoorD"))
+# doors_buff <- doors_pts %>% 
+#   st_buffer(dist = 6) #adjust this buffer as you see fit!
 # 
-# #add trial door to dataset
-# trials <- trials %>% 
-#   full_join(trial_door, by = "Trial")
-
-# STEP 2: create spatial objects ------------------------------------------
-
-#spatial point for food location
-food_pts <- st_as_sf(coords, coords =  c("food_x","food_y"))
-
-#create a buffer of 6 cm around the food
-food_buff <- food_pts %>% 
-  st_buffer(dist = 6) 
-
-#doors list: points and buffered points
-doors_pts <- coords %>% 
-  st_as_sf(coords = c("x", "y"))# %>% 
-  #mutate(shortest_path = st_distance(x = .,y = food_pt)) #length of the shortest trajectory from each door to food))
-
-doors_buff <- doors_pts %>% 
-  st_buffer(dist = 6) #adjust this buffer as you see fit!
-
-trials_sf <- tracking %>% 
-  drop_na(x) %>% 
-  st_as_sf(coords = c("x", "y"))
+# trials_sf <- tracking %>% 
+#   drop_na(x) %>% 
+#   st_as_sf(coords = c("x", "y"))
 
 # STEP 3: spatial investigations! ------------------------------------------
 
 #empty dataframe for saving info on visit to other doors on trip back
 other_door_visits <- data.frame(ID = NULL, door = NULL, Trial = NULL) #we can also add the length of time spent at the door if needed
 
-trials_sf$unique_trial_id <- paste(trials_sf$Season, trials_sf$Trial, trials_sf$ID, sep = "_")
-
-trial_ls <- split(trials_sf, trials_sf$unique_trial_id)
+trial_ls <- split(tracking, tracking$unique_trial_ID)
 
 #prepare cluster for parallel computation
 mycl <- makeCluster(10) #the number of CPUs to use (adjust this based on your machine)
@@ -88,25 +68,49 @@ b <- Sys.time()
 #sp_prep <- lapply(trial_ls, function(x){ 
 sp_prep <-parLapply(mycl, trial_ls, function(x){ 
   
-  #extract door info for this trial
-  trial_door <- doors_pts %>% 
-    filter(ID == unique(x$ID) & season == unique(x$Season) & door == doors[doors$Trial == unique(x$Trial), "door"]) 
+  #extract food coordinates for this trial AND convert to a sf object
+  food_coords <- coords %>% 
+    filter(unique_trial_ID == unique(x$unique_trial_ID)) %>% 
+    dplyr::select(c("food_x", "food_y")) %>% 
+    st_as_sf(coords = c("food_x", "food_y"))
+    
+  food_buffer <- food_coords %>% 
+    st_buffer(dist = 3) #half of the length of the largest possible shrew
+    
+  #extract door coordinates for this trial AND convert to a sf object
+  trial_door_ID <- doors %>% 
+    filter(Trial == unique(x$Trial)) %>% 
+    pull(door)
   
-  trial_food <- food_buff[food_buff$ID == unique(x$ID) & food_buff$season == unique(x$Season) & food_buff$door == trial_door$door,]
+  trial_door_coords <- coords %>% 
+    filter(unique_trial_ID == unique(x$unique_trial_ID)) %>% 
+    dplyr::select(starts_with(trial_door_ID)) %>% 
+    st_as_sf(coords = colnames(.))
   
-  #extract location of all the doors for trial x
-  trial_door_buff <- doors_buff[doors_buff$ID == unique(x$ID) & doors_buff$season == unique(x$Season),]
+  trial_door_buffer <- trial_door_coords %>% 
+    st_buffer(dist = 3)
   
-  #plot track and door and food and other doors!
-  #mapview(x) + mapview(trial_door, color = "red") + mapview(trial_food, color = "orange") + mapview(trial_door_buff, color = "black")
+  #convert the track into an sf object
+  track_sf <- x %>% 
+    st_as_sf(coords = c("x", "y"))
+
   
   #find the points of overlap between track and food
-  at_food <- x %>% 
-    st_intersection(trial_food) %>% 
-    arrange(frame) #arrange by time/frame
-  
+  at_food <- track_sf %>% 
+    st_intersection(food_buffer) %>% 
+    arrange(frame) %>% #arrange by time/frame
+    mutate(timediff = frame - lag(frame)) %>% 
+    mutate(new_timediff = ifelse(is.na(timediff) | timediff != 1, 1,0 )) %>% 
+    mutate(visit_seq = cumsum(new_timediff))
+         
+           
+    mutate(visit_chunk = ifelse(is.na(timediff), "arrival",
+                                ifelse(timediff == 1 & lag(timediff) == 1, )))
+    
   #plot to check
-  #mapview(x)  + mapview(trial_food, color = "orange") + mapview(at_food, color = "yellow")
+  #mapview(track_sf)  + mapview(food_buffer, color = "orange") + mapview(at_food, color = "yellow") + mapview(food_coords, color = "orange")
+  
+
   
   #add at food journey info to x
   x <- x %>% 
@@ -140,6 +144,9 @@ sp_prep <-parLapply(mycl, trial_ls, function(x){
 
 Sys.time() - b 
 stopCluster(mycl) 
+
+
+mapview(trial_door_coords) + mapview(food_buffer) + mapview(food_coords) + mapview(trial_door_buffer) + mapview(track_sf)
 
 
 #saveRDS(sp_prep, file = "/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/5_trials_sp.rds")
