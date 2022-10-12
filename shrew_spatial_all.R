@@ -98,34 +98,33 @@ sp_prep <-parLapply(mycl, trial_ls, function(x){
   #find the points of overlap between track and food
   at_food <- track_sf %>% 
     st_intersection(food_buffer) %>% 
+    as.data.frame() %>% 
     arrange(frame) %>% #arrange by time/frame
     mutate(timediff = frame - lag(frame)) %>% 
-    mutate(new_timediff = ifelse(is.na(timediff) | timediff != 1, 1,0 )) %>% 
+    mutate(new_timediff = ifelse(is.na(timediff) | timediff != 1, 1,0)) %>% 
     mutate(visit_seq = cumsum(new_timediff))
-         
-           
-    mutate(visit_chunk = ifelse(is.na(timediff), "arrival",
-                                ifelse(timediff == 1 & lag(timediff) == 1, )))
-    
-  #plot to check
+  
+    #plot to check
   #mapview(track_sf)  + mapview(food_buffer, color = "orange") + mapview(at_food, color = "yellow") + mapview(food_coords, color = "orange")
   
-
-  
   #add at food journey info to x
-  x <- x %>% 
+  track_sf_2 <- track_sf %>% 
+    full_join(at_food[c("frame", "visit_seq")]) %>% 
+    arrange(frame) %>% 
     mutate(food_journey = ifelse(frame == head(at_food$frame,1), "arrival", #the first point in the at_food data is the arrival
-                                 ifelse(frame == tail(at_food$frame,1), "departure", #the last point in the at_food data is the arrival
+                                 ifelse(frame == tail(at_food[at_food$visit_seq == 1, "frame"],1), "departure", #the last point in the first visit to food
                                         ifelse(frame < head(at_food$frame,1), "trip_to", #points before point of arrival are trip to food
-                                               ifelse(between(frame, head(at_food$frame,1), tail(at_food$frame,1)), "at_food", #time spent at food, between arrival and departure from food
-                                                      "trip_back"))))) #all other points are trip back from food
+                                               ifelse(between(frame, head(at_food[at_food$visit_seq == 1, "frame"],1), tail(at_food[at_food$visit_seq == 1,"frame"],1)), "at_food", #time spent at food, between arrival and departure from food
+                                                      ifelse(frame %in% at_food[at_food$visit_seq != 1,"frame"], 
+                                                             paste("trip_back_revisit", visit_seq, sep = "_"),
+                                                             "trip_back")))))) #all other points are trip back from food
   
   #plot to check
-  #mapview(x, zcol = "food_journey") + mapview(trial_food, color = "orange") 
+  #mapview(track_sf_2, zcol = "food_journey") + mapview(food_buffer, color = "orange") 
   
   #check for overlap between the return trip and other doors
-  other_doors <- x %>% 
-    filter(food_journey == "trip_back") %>% 
+  other_doors <- track_sf_2 %>% 
+    filter(food_journey == "trip_back") %>%
     st_intersection(trial_door_buff %>%  filter(door != unique(trial_door$door))) #exclude the trial door
   
   #if there was a visit to another door, save info to other_door_visits dataframe
