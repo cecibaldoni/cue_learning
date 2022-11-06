@@ -11,29 +11,41 @@ library(parallel)
 
 # STEP 1: open data for all trials ------------------------------------------
 
-doors <- read.csv("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/jul4_data/trial_door.csv") %>% 
+#doors <- read.csv("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/jul4_data/trial_door.csv") %>% 
+#  mutate(Trial = paste0("T",trial_n))
+
+doors <- read.csv("D:/HFSP_SHREW/data cue/trial_door.csv") %>% 
   mutate(Trial = paste0("T",trial_n))
 
-coords <- read.csv("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/oct12_data/Food_door coordinates.csv") %>% 
-  mutate(Trial = paste0("T",TRIAL)) %>% 
+# coords <- read.csv("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/oct12_data/Food_door coordinates.csv") %>% 
+#   mutate(Trial = paste0("T",TRIAL)) %>% 
+#   mutate(unique_trial_ID = paste(SEASON, Trial, ID, sep = "_"))
+
+coords <- read.csv("D:/HFSP_SHREW/data cue/Food_door coordinates.csv") %>%
+  mutate(Trial = paste0("T",TRIAL)) %>%
   mutate(unique_trial_ID = paste(SEASON, Trial, ID, sep = "_"))
 
-tracking <- lapply(list.files("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/oct12_data/tracking", full.names = T), read.csv) %>% 
-  reduce(rbind) %>% 
-  drop_na(frame) %>% 
-  mutate(unique_trial_ID = paste(Season, Trial, ID, sep = "_")) #create unique trial IDs. there are 10 trials per season per shrew
+# tracking <- lapply(list.files("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/oct12_data/tracking", full.names = T), read.csv) %>% 
+#   reduce(rbind) %>% 
+#   drop_na(frame) %>% 
+#   mutate(unique_trial_ID = paste(Season, Trial, ID, sep = "_")) #create unique trial IDs. there are 10 trials per season per shrew
 
+tracking <- lapply(list.files("D:/HFSP_SHREW/data cue/tracking", full.names = T), read.csv) %>%
+  reduce(rbind) %>%
+  drop_na(frame) %>%
+  mutate(unique_trial_ID = paste(Season, Trial, ID, sep = "_")) #create unique trial IDs. there are 10 trials per season per shrew
+tracking
 
 # # STEP 2: create spatial objects ------------------------------------------
 # 
 # #spatial point for food location
 # food_pts <- st_as_sf(coords, coords =  c("food_x","food_y"))
-# 
-# #create a buffer of 6 cm around the food
+# # 
+# # #create a buffer of 6 cm around the food
 # food_buff <- food_pts %>% 
 #   st_buffer(dist = 6) 
-# 
-# #doors list: points and buffered points
+# # 
+# # #doors list: points and buffered points
 # doors_pts <- coords %>% 
 #   st_as_sf(coords = c("x", "y"))# %>% 
 #   mutate(shortest_path = st_distance(x = .,y = food_pt)) #length of the shortest trajectory from each door to food))
@@ -53,9 +65,12 @@ other_door_visits <- data.frame(ID = NULL, door = NULL, Trial = NULL) #we can al
 trial_ls <- split(tracking, tracking$unique_trial_ID)
 
 #prepare cluster for parallel computation
-mycl <- makeCluster(10) #the number of CPUs to use (adjust this based on your machine)
+#mycl <- makeCluster(10) #the number of CPUs to use (adjust this based on your machine)
+mycl <- makeCluster(3)
 
-clusterExport(mycl, c("trial_ls", "other_door_visits", "doors_pts", "food_buff","doors_buff", "doors")) #define the variable that will be used within the ParLapply call
+#clusterExport(mycl, c("trial_ls", "other_door_visits", "doors_pts", "food_buff","doors_buff", "doors")) #define the variable that will be used within the ParLapply call
+
+clusterExport(mycl, c("coords", "trial_ls", "doors")) #define the variable that will be used within the ParLapply call
 
 clusterEvalQ(mycl, { #the packages that will be used within the ParLapply call
   library(sf)
@@ -93,7 +108,6 @@ sp_prep <-parLapply(mycl, trial_ls, function(x){
   #convert the track into an sf object
   track_sf <- x %>% 
     st_as_sf(coords = c("x", "y"))
-
   
   #find the points of overlap between track and food
   at_food <- track_sf %>% 
@@ -125,7 +139,9 @@ sp_prep <-parLapply(mycl, trial_ls, function(x){
   #check for overlap between the return trip and other doors
   other_doors <- track_sf_2 %>% 
     filter(food_journey == "trip_back") %>%
-    st_intersection(trial_door_buff %>%  filter(door != unique(trial_door$door))) #exclude the trial door
+    st_intersection(trial_door_buffer %>%  filter(door != unique(trial_door$door))) #exclude the trial door
+
+#    st_intersection(trial_door_buff %>%  filter(door != unique(trial_door$door))) #exclude the trial door
   
   #if there was a visit to another door, save info to other_door_visits dataframe
   if(nrow(other_doors) > 0){
