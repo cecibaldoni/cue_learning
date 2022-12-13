@@ -8,20 +8,20 @@ library(tidyverse)
 library(sf) #for spatial manipulation
 library(mapview) #for interactive visualization of the spatial data
 library(parallel)
-
+library(ggplot2)
 # STEP 1: open data for all trials ------------------------------------------
 
 #doors <- read.csv("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/jul4_data/trial_door.csv") %>% 
 #  mutate(Trial = paste0("T",trial_n))
 
-doors <- read.csv("D:/HFSP_SHREW/data cue/trial_door.csv") %>% 
+doors <- read.csv("~/Documents/data/cue_learning/trial_door.csv") %>% 
   mutate(Trial = paste0("T",trial_n))
 
 # coords <- read.csv("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/oct12_data/Food_door coordinates.csv") %>% 
 #   mutate(Trial = paste0("T",TRIAL)) %>% 
 #   mutate(unique_trial_ID = paste(SEASON, Trial, ID, sep = "_"))
 
-coords <- read.csv("D:/HFSP_SHREW/data cue/Food_door coordinates.csv") %>%
+coords <- read.csv("~/Documents/data/cue_learning/food_door_coordinates.csv", sep = ";",header = TRUE) %>%
   mutate(Trial = paste0("T",TRIAL)) %>%
   mutate(unique_trial_ID = paste(SEASON, Trial, ID, sep = "_"))
 
@@ -30,25 +30,27 @@ coords <- read.csv("D:/HFSP_SHREW/data cue/Food_door coordinates.csv") %>%
 #   drop_na(frame) %>% 
 #   mutate(unique_trial_ID = paste(Season, Trial, ID, sep = "_")) #create unique trial IDs. there are 10 trials per season per shrew
 
-tracking <- lapply(list.files("D:/HFSP_SHREW/data cue/tracking", full.names = T), read.csv) %>%
+tracking <- lapply(list.files("~/Documents/data/cue_learning/tracking", full.names = T), read.csv) %>%
   reduce(rbind) %>%
   drop_na(frame) %>%
   mutate(unique_trial_ID = paste(Season, Trial, ID, sep = "_")) #create unique trial IDs. there are 10 trials per season per shrew
-tracking
 
 # # STEP 2: create spatial objects ------------------------------------------
 # 
 # #spatial point for food location
-# food_pts <- st_as_sf(coords, coords =  c("food_x","food_y"))
-# # 
-# # #create a buffer of 6 cm around the food
+# food_pts <- st_as_sf(coords, coords =  c("FOOD_x","FOOD_y"))
+# # # 
+# # # #create a buffer of 6 cm around the food
 # food_buff <- food_pts %>% 
 #   st_buffer(dist = 6) 
-# # 
-# # #doors list: points and buffered points
-# doors_pts <- coords %>% 
-#   st_as_sf(coords = c("x", "y"))# %>% 
-#   mutate(shortest_path = st_distance(x = .,y = food_pt)) #length of the shortest trajectory from each door to food))
+# 
+# # # #doors list: points and buffered points
+# doors_pts <- coords %>%
+#   st_as_sf(coords = c("A_x", "A_y")) %>%
+#   st_as_sf(coords = c("B_x", "B_y")) %>%
+#   st_as_sf(coords = c("C_x", "C_y")) %>%
+#   st_as_sf(coords = c("D_x", "D_y")) %>%
+#   mutate(shortest_path = st_distance(x = .,y = food_pts)) #length of the shortest trajectory from each door to food))
 # 
 # doors_buff <- doors_pts %>% 
 #   st_buffer(dist = 6) #adjust this buffer as you see fit!
@@ -71,23 +73,27 @@ mycl <- makeCluster(3)
 #clusterExport(mycl, c("trial_ls", "other_door_visits", "doors_pts", "food_buff","doors_buff", "doors")) #define the variable that will be used within the ParLapply call
 
 clusterExport(mycl, c("coords", "trial_ls", "doors")) #define the variable that will be used within the ParLapply call
-
+ 
 clusterEvalQ(mycl, { #the packages that will be used within the ParLapply call
-  library(sf)
-  library(sp)
-  library(tidyverse)
-})
+   library(sf)
+   library(sp)
+   library(tidyverse)
+ })
+
+#trajr better for comparison between tracks
 
 
 b <- Sys.time()
 #sp_prep <- lapply(trial_ls, function(x){ 
 sp_prep <-parLapply(mycl, trial_ls, function(x){ 
   
+  #if to call all blocks one at a time
+  #x = trial_ls[[1]]
   #extract food coordinates for this trial AND convert to a sf object
   food_coords <- coords %>% 
     filter(unique_trial_ID == unique(x$unique_trial_ID)) %>% 
-    dplyr::select(c("food_x", "food_y")) %>% 
-    st_as_sf(coords = c("food_x", "food_y"))
+    dplyr::select(c("FOOD_x", "FOOD_y")) %>% 
+    st_as_sf(coords = c("FOOD_x", "FOOD_y"))
     
   food_buffer <- food_coords %>% 
     st_buffer(dist = 3) #half of the length of the largest possible shrew
@@ -119,7 +125,10 @@ sp_prep <-parLapply(mycl, trial_ls, function(x){
     mutate(visit_seq = cumsum(new_timediff))
   
     #plot to check
-  #mapview(track_sf)  + mapview(food_buffer, color = "orange") + mapview(at_food, color = "yellow") + mapview(food_coords, color = "orange")
+  # mapview(track_sf)  + 
+  #   mapview(food_buffer, color = "yellow") + 
+  #   mapview(at_food, color = "yellow") + 
+  #   mapview(food_coords, color = "black")
   
   #add at food journey info to x
   track_sf_2 <- track_sf %>% 
@@ -136,23 +145,22 @@ sp_prep <-parLapply(mycl, trial_ls, function(x){
   #plot to check
   #mapview(track_sf_2, zcol = "food_journey") + mapview(food_buffer, color = "orange") 
   
-  #check for overlap between the return trip and other doors
-  other_doors <- track_sf_2 %>% 
-    filter(food_journey == "trip_back") %>%
-    st_intersection(trial_door_buffer %>%  filter(door != unique(trial_door$door))) #exclude the trial door
-
-#    st_intersection(trial_door_buff %>%  filter(door != unique(trial_door$door))) #exclude the trial door
-  
-  #if there was a visit to another door, save info to other_door_visits dataframe
-  if(nrow(other_doors) > 0){
-    new_visits <- other_doors %>% 
-      group_by(door) %>%  slice(1) %>%  #this will give you one row per other door visited
-      dplyr::select(c("ID", "Trial", "door")) %>% 
-      st_drop_geometry() #convert back to non-spatial object
-    
-    #append to other_door_visits
-    other_door_visits <<- rbind(other_door_visits,new_visits) #double arrow assignment operator allows to modify the dataframe in the global environment
-  }
+  # check for overlap between the return trip and other doors
+  # other_doors <- track_sf_2 %>%
+  #   filter(food_journey == "trip_back") %>%
+  #   st_intersection(trial_door_buffer %>% filter(trial_door$door != unique(trial_door$door)))
+  #   #st_intersection(trial_door_buffer %>% filter(door != unique(trial_door$door))) #exclude the trial door
+  # 
+  # #if there was a visit to another door, save info to other_door_visits dataframe
+  # if(nrow(other_doors) > 0){
+  #   new_visits <- other_doors %>%
+  #     group_by(door) %>%  slice(1) %>%  #this will give you one row per other door visited
+  #     dplyr::select(c("ID", "Trial", "door")) %>%
+  #     st_drop_geometry() #convert back to non-spatial object
+  # 
+  #   #append to other_door_visits
+  #   # other_door_visits <<- rbind(other_door_visits,new_visits) #double arrow assignment operator allows to modify the dataframe in the global environment
+  # }
   
   return(x)
 })
