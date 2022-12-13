@@ -85,10 +85,13 @@ clusterEvalQ(mycl, { #the packages that will be used within the ParLapply call
 
 b <- Sys.time()
 #sp_prep <- lapply(trial_ls, function(x){ 
+#PROBLEM WITH CODE: if I call it all together it gives me an error. If I call one block at a time with only the first trial works well.
+
 sp_prep <-parLapply(mycl, trial_ls, function(x){ 
   
   #if to call all blocks one at a time
   #x = trial_ls[[1]]
+  
   #extract food coordinates for this trial AND convert to a sf object
   food_coords <- coords %>% 
     filter(unique_trial_ID == unique(x$unique_trial_ID)) %>% 
@@ -146,9 +149,9 @@ sp_prep <-parLapply(mycl, trial_ls, function(x){
   #mapview(track_sf_2, zcol = "food_journey") + mapview(food_buffer, color = "orange") 
   
   # check for overlap between the return trip and other doors
+  #PROBLEM WITH THE CODE. "door" not found, not sure how to fix
   # other_doors <- track_sf_2 %>%
   #   filter(food_journey == "trip_back") %>%
-  #   st_intersection(trial_door_buffer %>% filter(trial_door$door != unique(trial_door$door)))
   #   #st_intersection(trial_door_buffer %>% filter(door != unique(trial_door$door))) #exclude the trial door
   # 
   # #if there was a visit to another door, save info to other_door_visits dataframe
@@ -173,8 +176,9 @@ mapview(trial_door_coords) + mapview(food_buffer) + mapview(food_coords) + mapvi
 
 
 #saveRDS(sp_prep, file = "/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/5_trials_sp.rds")
+saveRDS(sp_prep, file = "/home/ceci/Documents/data/trials_sp.rds")
 #saveRDS(other_door_visits, "/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/5_trials_other_doors.rds")
-
+saveRDS(other_door_visits, "/home/ceci/Documents/data/trials_other_doors.rds")
 
 # STEP 4: Calculate speed, distance, tortuosity ------------------------------------------
 
