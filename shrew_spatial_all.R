@@ -13,10 +13,8 @@ library(ggplot2)
 
 #doors <- read.csv("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/jul4_data/trial_door.csv") %>% 
 #  mutate(Trial = paste0("T",trial_n))
-
 doors <- read.csv("~/Documents/data/cue_learning/trial_door.csv") %>% 
   mutate(Trial = paste0("T",trial_n))
-
 # coords <- read.csv("/home/enourani/ownCloud/Work/Collaborations/Cecilia_2022/oct12_data/Food_door coordinates.csv") %>% 
 #   mutate(Trial = paste0("T",TRIAL)) %>% 
 #   mutate(unique_trial_ID = paste(SEASON, Trial, ID, sep = "_"))
@@ -35,6 +33,12 @@ tracking <- lapply(list.files("~/Documents/data/cue_learning/tracking", full.nam
   drop_na(frame) %>%
   mutate(unique_trial_ID = paste(Season, Trial, ID, sep = "_")) #create unique trial IDs. there are 10 trials per season per shrew
 
+trialIDs=unique(tracking$unique_trial_ID)
+#in tracking.csv but not in food_door_coordinates.csv
+trialIDs[!(trialIDs %in% coords$unique_trial_ID)]
+#in food_door_coordinates.csv but not in tracking.csv  
+coords$unique_trial_ID[!(coords$unique_trial_ID %in% trialIDs)]
+
 # # STEP 2: create spatial objects ------------------------------------------
 # 
 # #spatial point for food location
@@ -51,6 +55,12 @@ tracking <- lapply(list.files("~/Documents/data/cue_learning/tracking", full.nam
 #   st_as_sf(coords = c("C_x", "C_y")) %>%
 #   st_as_sf(coords = c("D_x", "D_y")) %>%
 #   mutate(shortest_path = st_distance(x = .,y = food_pts)) #length of the shortest trajectory from each door to food))
+# doors_pts <- coords %>%
+#   st_as_sf(coords = c("A_x", "A_y")) %>%
+#   st_as_sf(coords = c("B_x", "B_y")) %>%
+#   st_as_sf(coords = c("C_x", "C_y")) %>%
+#   st_as_sf(coords = c("D_x", "D_y")) %>%
+#   mutate(shortest_path = st_distance(x = .,y = food_coords))
 # 
 # doors_buff <- doors_pts %>% 
 #   st_buffer(dist = 6) #adjust this buffer as you see fit!
@@ -80,16 +90,13 @@ clusterEvalQ(mycl, { #the packages that will be used within the ParLapply call
    library(tidyverse)
  })
 
-#trajr better for comparison between tracks
-
 
 b <- Sys.time()
 #sp_prep <- lapply(trial_ls, function(x){ 
-#PROBLEM WITH CODE: if I call it all together it gives me an error. If I call one block at a time with only the first trial works well.
 
 sp_prep <-parLapply(mycl, trial_ls, function(x){ 
   
-  #if to call all blocks one at a time
+  #to call all blocks one at a time
   #x = trial_ls[[1]]
   
   #extract food coordinates for this trial AND convert to a sf object
@@ -99,7 +106,7 @@ sp_prep <-parLapply(mycl, trial_ls, function(x){
     st_as_sf(coords = c("FOOD_x", "FOOD_y"))
     
   food_buffer <- food_coords %>% 
-    st_buffer(dist = 3) #half of the length of the largest possible shrew
+    st_buffer(dist = 4) #half of the length of the largest possible shrew
     
   #extract door coordinates for this trial AND convert to a sf object
   trial_door_ID <- doors %>% 
@@ -112,13 +119,14 @@ sp_prep <-parLapply(mycl, trial_ls, function(x){
     st_as_sf(coords = colnames(.))
   
   trial_door_buffer <- trial_door_coords %>% 
-    st_buffer(dist = 3)
+    st_buffer(dist = 3.5)
   
   #convert the track into an sf object
   track_sf <- x %>% 
     st_as_sf(coords = c("x", "y"))
   
   #find the points of overlap between track and food
+  #WARNING MESSAGE
   at_food <- track_sf %>% 
     st_intersection(food_buffer) %>% 
     as.data.frame() %>% 
@@ -151,9 +159,9 @@ sp_prep <-parLapply(mycl, trial_ls, function(x){
   # check for overlap between the return trip and other doors
   #PROBLEM WITH THE CODE. "door" not found, not sure how to fix
   # other_doors <- track_sf_2 %>%
-  #   filter(food_journey == "trip_back") %>%
-  #   #st_intersection(trial_door_buffer %>% filter(door != unique(trial_door$door))) #exclude the trial door
-  # 
+  #    filter(food_journey == "trip_back") %>%
+  #    st_intersection(trial_door_buffer %>% filter(door != unique(trial_door$door))) #exclude the trial door
+  # # 
   # #if there was a visit to another door, save info to other_door_visits dataframe
   # if(nrow(other_doors) > 0){
   #   new_visits <- other_doors %>%
@@ -162,7 +170,7 @@ sp_prep <-parLapply(mycl, trial_ls, function(x){
   #     st_drop_geometry() #convert back to non-spatial object
   # 
   #   #append to other_door_visits
-  #   # other_door_visits <<- rbind(other_door_visits,new_visits) #double arrow assignment operator allows to modify the dataframe in the global environment
+  #   other_door_visits <<- rbind(other_door_visits,new_visits) #double arrow assignment operator allows to modify the dataframe in the global environment
   # }
   
   return(x)
@@ -170,7 +178,6 @@ sp_prep <-parLapply(mycl, trial_ls, function(x){
 
 Sys.time() - b 
 stopCluster(mycl) 
-
 
 mapview(trial_door_coords) + mapview(food_buffer) + mapview(food_coords) + mapview(trial_door_buffer) + mapview(track_sf)
 
@@ -207,7 +214,7 @@ other_door_visits <- readRDS("/home/enourani/ownCloud/Work/Collaborations/Cecili
 #I'm adding this info to the dataframe that associates the trial to its door
 trial_door <- trial_door %>% 
   rowwise() %>% 
-  mutate(visit_to_prev_door = ifelse(Trial == "T1", NA, #assign AN for the first trial
+  mutate(visit_to_prev_door = ifelse(Trial == "T1", NA, #assign NA for the first trial
                                      ifelse(nrow(other_door_visits[other_door_visits$Trial == Trial,]) == 0, "No", #if this trial isn't in the other_door_visitis, assign no
                                      ifelse(lag(Door,1) %in% as.character(other_door_visits[other_door_visits$Trial == Trial, "Door.1"]), "Yes", "No"))))
 
